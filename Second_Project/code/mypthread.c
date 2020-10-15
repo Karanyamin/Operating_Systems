@@ -1,13 +1,41 @@
 // File:	mypthread.c
 
-// List all group member's name:
+// List all group member's name: Karan Amin, Saavi Dhingra
 // username of iLab:
 // iLab Server:
 
 #include "mypthread.h"
 
+#define handle_error(msg) \
+    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
+
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
+uint thread_counter = 0;
+tcb * run_queue = NULL;
+
+//ADD ALL HELPER FUNCTIONS HERE
+void create_run_queue(){
+	//Creates the run queue with the first node being the current context running
+	tcb * node = malloc(sizeof(tcb));
+
+	//Intialize tcb variables
+	node->thread_ID = thread_counter++;
+	node->stack = malloc(STACK_SIZE);
+	if (getcontext(&(node->context_state)) == -1)
+		handle_error("getcontext error");
+	node->context_state.uc_link = NULL;
+	node->context_state.uc_stack.ss_sp = node->stack;
+	node->context_state.uc_stack.ss_size = STACK_SIZE;
+	node->context_state.uc_stack.ss_flags = 0;
+	node->thread_state = READY;
+	node->return_value = NULL; 
+	node->time_quanta_counter = 0;
+	node->next = NULL;
+
+	run_queue = node;
+}
 
 
 /* create a new thread */
@@ -18,7 +46,31 @@ int mypthread_create(mypthread_t * thread, pthread_attr_t * attr,
        // allocate space of stack for this thread to run
        // after everything is all set, push this thread int
        // YOUR CODE HERE
+	//If there's no runqueue, create runqueue and add the main context as the first node.
+	if (run_queue == NULL) create_run_queue();
 
+	//Create a TCB for the new thread with the associated function
+	tcb * node = malloc(sizeof(tcb));
+
+	//Intialize tcb variables
+	node->thread_ID = thread_counter++;
+	node->stack = malloc(STACK_SIZE);
+	node->thread_state = READY;
+	node->return_value = NULL;
+	node->time_quanta_counter = 0;
+	if (getcontext(&(node->context_state)) == -1)
+		handle_error("getcontext error");
+	node->context_state.uc_link = NULL;
+	node->context_state.uc_stack.ss_sp = node->stack;
+	node->context_state.uc_stack.ss_size = STACK_SIZE;
+	node->context_state.uc_stack.ss_flags = 0;
+	makecontext(&(node->context_state), (void *)&function, 1, arg);
+
+	//Add this tcb node to the start of the run_queue
+	node->next = run_queue;
+	run_queue = node;
+
+	
     return 0;
 };
 

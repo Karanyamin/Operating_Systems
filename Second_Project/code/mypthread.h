@@ -18,6 +18,15 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <string.h>
+#include <ucontext.h>
+
+#define STACK_SIZE SIGSTKSZ
+#define READY 0
+#define SCHEDULED 1
+#define BLOCKED 2
 
 typedef uint mypthread_t;
 
@@ -31,6 +40,13 @@ typedef struct threadControlBlock {
 	// And more ...
 
 	// YOUR CODE HERE
+	mypthread_t thread_ID;
+	void * stack;
+	ucontext_t context_state;
+	int thread_state;
+	void * return_value;
+	int time_quanta_counter;
+	struct threadControlBlock * next; 
 } tcb;
 
 /* mutex struct definition */
