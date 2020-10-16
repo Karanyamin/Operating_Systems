@@ -22,11 +22,13 @@
 #include <sys/time.h>
 #include <string.h>
 #include <ucontext.h>
+#include <limits.h>
 
 #define STACK_SIZE SIGSTKSZ
 #define READY 0
 #define SCHEDULED 1
 #define BLOCKED 2
+#define TIMER 10000
 
 typedef uint mypthread_t;
 

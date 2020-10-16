@@ -10,10 +10,14 @@
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 
+//ALL method headers not in header file go HERE
+static void schedule();
+
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
 uint thread_counter = 0;
 tcb * run_queue = NULL;
+struct itimerval * timer;
 
 //ADD ALL HELPER FUNCTIONS HERE
 void create_run_queue(){
@@ -29,12 +33,29 @@ void create_run_queue(){
 	node->context_state.uc_stack.ss_sp = node->stack;
 	node->context_state.uc_stack.ss_size = STACK_SIZE;
 	node->context_state.uc_stack.ss_flags = 0;
-	node->thread_state = READY;
+	node->thread_state = SCHEDULED;
 	node->return_value = NULL; 
 	node->time_quanta_counter = 0;
 	node->next = NULL;
 
 	run_queue = node;
+
+	//Use sigaction to register handler
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = &schedule;
+	sigaction(SIGPROF, &sa, NULL);
+
+	//Create timer
+	timer = malloc(sizeof(struct itimerval));
+
+	//Initalize timer to expire after
+	timer->it_value.tv_sec = 0;
+	timer->it_value.tv_usec = TIMER;
+
+	//Configure timer to expire every
+	timer->it_interval.tv_sec = 0;
+	timer->it_interval.tv_usec = TIMER;
 }
 
 
@@ -46,7 +67,7 @@ int mypthread_create(mypthread_t * thread, pthread_attr_t * attr,
        // allocate space of stack for this thread to run
        // after everything is all set, push this thread int
        // YOUR CODE HERE
-	//If there's no runqueue, create runqueue and add the main context as the first node.
+	//If there's no runqueue, create runqueue and add the main context as the first node. Also create timer
 	if (run_queue == NULL) create_run_queue();
 
 	//Create a TCB for the new thread with the associated function
@@ -70,7 +91,12 @@ int mypthread_create(mypthread_t * thread, pthread_attr_t * attr,
 	node->next = run_queue;
 	run_queue = node;
 
-	
+	//Assign thread ID to thread
+	(*thread) = node->thread_ID;
+
+	//Call scheduler to pick the next task and run it
+	schedule();
+
     return 0;
 };
 
@@ -156,6 +182,49 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
+
+	//STOP THE TIMER
+	timer->it_interval.tv_sec = 0;
+	timer->it_interval.tv_usec = 0;
+
+	//Find current thread running and save context and change state to READY
+	tcb * current_thread = NULL;
+	tcb * ptr = run_queue;
+	while (ptr != NULL){
+		if (ptr->thread_state == SCHEDULED){
+			ptr->thread_state = READY;
+			current_thread = ptr;
+			break;
+		}
+		ptr = ptr->next;
+	}
+
+	//Find the READY thread with the lowest time quanta counter
+	ptr = run_queue;
+	tcb * highest_priority_thread = NULL;
+	int lowest_time_counter = INT_MAX;
+	while (ptr != NULL){
+		if (ptr->thread_state == READY && ptr->time_quanta_counter < lowest_time_counter){
+			highest_priority_thread = ptr;
+			lowest_time_counter = ptr->time_quanta_counter;
+		}
+		ptr = ptr->next;
+	}
+
+	if (highest_priority_thread != NULL){
+		//Found the thread with the lowest time quanta counter AKA shortest job
+		//Change highest priority state to SCHEDULED
+		highest_priority_thread->thread_state = SCHEDULED;
+
+		//Set timer and start timer
+		timer->it_interval.tv_sec = 0;
+		timer->it_interval.tv_usec = TIMER;
+		setitimer(ITIMER_PROF, timer, NULL);
+
+		//Swap contexts
+		if (swapcontext(&(current_thread->context_state), &(highest_priority_thread->context_state)) == -1)
+			handle_error("swapcontext error");
+	}
 
 // schedule policy
 #ifndef MLFQ
