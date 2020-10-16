@@ -10,9 +10,26 @@
  * You can modify and use this program as much as possible.
  * This will not be graded.
  */
+void * do_nothing(void * ptr){
+	while (1){
+		//do nothing
+		printf("IN do nothing\n");
+	}
+}
+
+
 int main(int argc, char **argv) {
 
-	/* Implement HERE */
+	printf("Hello this is a tester file\n");
+	sleep(5);
+
+	pthread_t thread;
+	pthread_create(&thread, NULL, do_nothing, NULL);
+	while (1){
+		//do nothing
+		printf("IN main\n");
+	}
+	
 
 	return 0;
 }

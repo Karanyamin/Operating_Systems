@@ -28,7 +28,7 @@
 #define READY 0
 #define SCHEDULED 1
 #define BLOCKED 2
-#define TIMER 10000
+#define TIMER 50000
 
 typedef uint mypthread_t;
 

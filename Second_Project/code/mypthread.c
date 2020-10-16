@@ -27,15 +27,15 @@ void create_run_queue(){
 	//Intialize tcb variables
 	node->thread_ID = thread_counter++;
 	node->stack = malloc(STACK_SIZE);
-	if (getcontext(&(node->context_state)) == -1)
-		handle_error("getcontext error");
-	node->context_state.uc_link = NULL;
-	node->context_state.uc_stack.ss_sp = node->stack;
-	node->context_state.uc_stack.ss_size = STACK_SIZE;
-	node->context_state.uc_stack.ss_flags = 0;
+	//if (getcontext(&(node->context_state)) == -1)
+	//	handle_error("getcontext error");
+	//node->context_state.uc_link = NULL;
+	//node->context_state.uc_stack.ss_sp = node->stack;
+	//node->context_state.uc_stack.ss_size = STACK_SIZE;
+	//node->context_state.uc_stack.ss_flags = 0;
 	node->thread_state = SCHEDULED;
 	node->return_value = NULL; 
-	node->time_quanta_counter = 0;
+	node->time_quanta_counter = 0; 
 	node->next = NULL;
 
 	run_queue = node;
@@ -85,7 +85,7 @@ int mypthread_create(mypthread_t * thread, pthread_attr_t * attr,
 	node->context_state.uc_stack.ss_sp = node->stack;
 	node->context_state.uc_stack.ss_size = STACK_SIZE;
 	node->context_state.uc_stack.ss_flags = 0;
-	makecontext(&(node->context_state), (void *)&function, 1, arg);
+	makecontext(&(node->context_state), (void *)function, 1, arg);
 
 	//Add this tcb node to the start of the run_queue
 	node->next = run_queue;
@@ -94,8 +94,8 @@ int mypthread_create(mypthread_t * thread, pthread_attr_t * attr,
 	//Assign thread ID to thread
 	(*thread) = node->thread_ID;
 
-	//Call scheduler to pick the next task and run it
-	schedule();
+	//Set the timer and go back to main
+	setitimer(ITIMER_PROF, timer, NULL);
 
     return 0;
 };
@@ -182,7 +182,7 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
-
+	
 	//STOP THE TIMER
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
@@ -194,6 +194,9 @@ static void schedule() {
 		if (ptr->thread_state == SCHEDULED){
 			ptr->thread_state = READY;
 			current_thread = ptr;
+
+			//Increment time quanta counter for this thread
+			current_thread->time_quanta_counter++;
 			break;
 		}
 		ptr = ptr->next;
