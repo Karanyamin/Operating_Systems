@@ -25,10 +25,16 @@
 #include <limits.h>
 
 #define STACK_SIZE SIGSTKSZ
+
 #define READY 0
 #define SCHEDULED 1
 #define BLOCKED 2
-#define TIMER 50000
+#define FINISHED 3
+#define JUSTBLOCKED 4
+#define JUSTFINISHED 5
+
+
+#define TIMER 20000
 
 typedef uint mypthread_t;
 
@@ -43,6 +49,7 @@ typedef struct threadControlBlock {
 
 	// YOUR CODE HERE
 	mypthread_t thread_ID;
+	mypthread_t joining_thread_ID;
 	void * stack;
 	ucontext_t context_state;
 	int thread_state;
@@ -54,7 +61,11 @@ typedef struct threadControlBlock {
 /* mutex struct definition */
 typedef struct mypthread_mutex_t {
 	/* add something here */
-
+	volatile int status; //Intialized to 0 (unlocked)
+	mypthread_t thread_who_locked; //Thread ID who locked the mutex
+	mypthread_t * thread_ID_list; //list of threads ID waiting for mutex to be unlocked
+	uint list_capacity;
+	uint next_free_spot;
 	// YOUR CODE HERE
 } mypthread_mutex_t;
 
