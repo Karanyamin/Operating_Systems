@@ -13,9 +13,11 @@
 //ALL method headers not in header file go HERE
 static void schedule();
 void print_run_queue();
+void print_mutex_queue(mypthread_mutex_t *mutex);
 
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
+uint number_of_locks = 0;
 uint thread_counter = 0;
 tcb * run_queue = NULL;
 struct itimerval * timer;
@@ -117,6 +119,9 @@ int mypthread_yield() {
 		Since the scheduler will make the current running process to ready state
 		And save it's context before switching to another context
 	*/
+	timer->it_value.tv_sec = 0;
+	timer->it_value.tv_usec = 0;
+	setitimer(ITIMER_PROF, timer, NULL);
 	schedule();
 	return 0;
 };
@@ -310,6 +315,7 @@ int mypthread_mutex_init(mypthread_mutex_t *mutex,
 
 
 	mutex->status = 0;
+	mutex->inuse = 0;
 	mutex->list_capacity = 10;
 	mutex->next_free_spot = 0;
 	mutex->thread_ID_list = (mypthread_t *)malloc(sizeof(mypthread_t) * mutex->list_capacity);
@@ -324,43 +330,149 @@ int mypthread_mutex_init(mypthread_mutex_t *mutex,
 
 /* aquire the mutex lock */
 int mypthread_mutex_lock(mypthread_mutex_t *mutex) {
+		//printf("YES SIR\n");
         // use the built-in test-and-set atomic function to test the mutex
         // if the mutex is acquired successfully, enter the critical section
         // if acquiring mutex fails, push current thread into block list and //
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
+		//printf("Locking\n");
 		
+		/*
 		//Stop the timer
 		struct itimerval saved_timer;
 		timer->it_value.tv_sec = 0;
 		timer->it_value.tv_usec = 0;
 		if (setitimer(ITIMER_PROF, timer, &saved_timer) == -1)
 			handle_error("Error setting timer");
-		
+		*/
 		
 		tcb * current_thread = NULL;
-		tcb * ptr = run_queue;
-		while (ptr != NULL){
-			if (ptr->thread_state == SCHEDULED){
-				current_thread = ptr;
-				break;
-			}
-			ptr = ptr->next;
-		}
-		
-
-		//Error finding currently running thread
-		if (ptr == NULL)
-			handle_error("Couldn't find a currently running thread");
-
+		struct itimerval * saved_timer = NULL;
 		
 		while (__atomic_test_and_set(&(mutex->status), 0) == 1){
+			//number_of_locks++;
 			//printf("IM in locked\n");
 			//Mutex is locked
+
+			if (__atomic_test_and_set(&(mutex->inuse), 0) == 0){
+				//printf("SEMI MEDIUM SIR\n");
+				//mutex open to modify
+
+				if (saved_timer == NULL){
+					saved_timer = malloc(sizeof(struct itimerval));
+					if (getitimer(ITIMER_PROF, saved_timer) == -1)
+						handle_error("Error setting timer");
+				}
+
+
+				//find current thread
+				if (current_thread == NULL){
+					tcb * ptr = run_queue;
+					while (ptr != NULL){
+						if (ptr->thread_state == SCHEDULED){
+							current_thread = ptr;
+							break;
+						}
+						ptr = ptr->next;
+					}
+					//Error finding currently running thread
+					if (ptr == NULL)
+						handle_error("Couldn't find a currently running thread");
+				}
+
+				//Check if list is full
+				if (mutex->next_free_spot >= mutex->list_capacity){
+					//printf("Expanding list\n");
+					//print_mutex_queue(mutex);
+					//Expand List
+					mutex->list_capacity = 2 * mutex->list_capacity;
+					mutex->thread_ID_list = realloc(mutex->thread_ID_list, sizeof(mypthread_t) * mutex->list_capacity);
+					if (mutex->thread_ID_list == NULL)
+						handle_error("Error during realloc");
+
+					//Initialize new alloced array
+					int i;
+					for (i = mutex->next_free_spot; i < mutex->list_capacity; i++){
+						mutex->thread_ID_list[i] = UINT_MAX;
+					}
+					//print_mutex_queue(mutex);
+					//printf("Got to end of realloc\n");
+				}
+
+				//Add thread ID to list
+				mutex->thread_ID_list[mutex->next_free_spot++] = current_thread->thread_ID;
+
+				//Block current thread
+				current_thread->thread_state = JUSTBLOCKED;
+
+				//Make the mutex able to be modified again
+				mutex->inuse = 0;
+
+				//Don't increase time quantum for this process since it didn't use all of it up
+				//current_thread->time_quanta_counter--;
+
+				//Stop timer and Schedule another thread to run
+				timer->it_value.tv_sec = 0;
+				timer->it_value.tv_usec = 0;
+				if (setitimer(ITIMER_PROF, timer, NULL) == -1)
+					handle_error("Error setting timer");
+				schedule();
+
+				/*	When the scheduler switches to this context again
+					the timer will be reset to the FULL time quantum.
+					We need to make sure to restore whatever time was
+					left for this thread before we return
+				*/
+
+			} else {
+				//printf("MEDIUM SIR\n");
+				//Another thread is currently modifying this mutex
+				//Yield this thread to give a chance for that thread to finish modifying the mutex
+				
+				//Save the time left for this process
+				if (saved_timer == NULL){
+					saved_timer = malloc(sizeof(struct itimerval));
+					if (getitimer(ITIMER_PROF, saved_timer) == -1)
+						handle_error("Error setting timer");
+				}
+
+				//Stop timer and Schedule another thread to run
+				timer->it_value.tv_sec = 0;
+				timer->it_value.tv_usec = 0;
+				if (setitimer(ITIMER_PROF, timer, NULL) == -1)
+					handle_error("Error setting timer");
+				schedule();
+			}
+			/*
+
+			//Save the timer left on this thread
+			struct itimerval saved_timer;
+			timer->it_value.tv_sec = 0;
+			timer->it_value.tv_usec = 0;
+			if (setitimer(ITIMER_PROF, timer, &saved_timer) == -1)
+				handle_error("Error setting timer");
+
+			//Find current thread
+			if (current_thread == NULL){
+				tcb * ptr = run_queue;
+				while (ptr != NULL){
+					if (ptr->thread_state == SCHEDULED){
+						current_thread = ptr;
+						break;
+					}
+					ptr = ptr->next;
+				}
+				//Error finding currently running thread
+				if (ptr == NULL)
+					handle_error("Couldn't find a currently running thread");
+			}
 			
 			//Check if list is full
 			if (mutex->next_free_spot >= mutex->list_capacity){
+				printf("Expanding list\n");
+				print_mutex_queue(mutex);
 				//Expand List
 				mutex->list_capacity = 2 * mutex->list_capacity;
 				mutex->thread_ID_list = realloc(mutex->thread_ID_list, mutex->list_capacity);
@@ -372,6 +484,8 @@ int mypthread_mutex_lock(mypthread_mutex_t *mutex) {
 				for (i = mutex->next_free_spot; i < mutex->list_capacity; i++){
 					mutex->thread_ID_list[i] = UINT_MAX;
 				}
+				print_mutex_queue(mutex);
+				printf("Got to end of realloc\n");
 			}
 
 			//Add thread ID to list
@@ -383,42 +497,61 @@ int mypthread_mutex_lock(mypthread_mutex_t *mutex) {
 			//Schedule another thread to run
 			schedule();
 
+			//Restore timer for this thread
+			saved_timer.it_interval.tv_sec = 0;
+			saved_timer.it_interval.tv_usec = 0;
+			if (setitimer(ITIMER_PROF, &saved_timer, NULL) == -1)
+				handle_error("Error setting timer");
 			
-			//Confirm timer is off before comparing lock again
+			
+			//Restore timer for this thread
 			timer->it_value.tv_sec = 0;
 			timer->it_value.tv_usec = 0;
-			if (setitimer(ITIMER_PROF, timer, &saved_timer) == -1)
+			if (setitimer(ITIMER_PROF, timer,NULL &saved_timer) == -1)
 				handle_error("Error setting timer");		
-			
-		}	
-		
-		mutex->thread_who_locked = current_thread->thread_ID;
+			*/
+		}
 
+		if (saved_timer != NULL){
+			saved_timer->it_interval.tv_sec = 0;
+			saved_timer->it_interval.tv_usec = 0;
+			if (setitimer(ITIMER_PROF, saved_timer, NULL) == -1)
+				handle_error("Error setting timer");
+			free(saved_timer);
+		}	
+		//printf("Yes sire\n");
 		
+		//mutex->thread_who_locked = current_thread->thread_ID;
+
+		/*
 		//Restore timer and return
 		saved_timer.it_interval.tv_sec = 0;
 		saved_timer.it_interval.tv_usec = 0;
 		if (setitimer(ITIMER_PROF, &saved_timer, NULL) == -1)
 			handle_error("Error setting timer");
-		
+		*/
 		return 0;
 };
 
 /* release the mutex lock */
 int mypthread_mutex_unlock(mypthread_mutex_t *mutex) {
+			//printf("NO SIR\n");
+
 	// Release mutex and make it available again.
 	// Put threads in block list to run queue
 	// so that they could compete for mutex later.
 	// YOUR CODE HERE
-	
+	//printf("trying to unlock\n");
+	/*
 	//Stop and save timer
 	struct itimerval saved_timer;
 	timer->it_value.tv_sec = 0;
 	timer->it_value.tv_usec = 0;
 	if (setitimer(ITIMER_PROF, timer, &saved_timer) == -1)
 		handle_error("Error setting timer");
+	*/
 	
-	
+	/*
 	//Find current thread running
 	tcb * current_thread = NULL;
 	tcb * ptr = run_queue;
@@ -434,11 +567,29 @@ int mypthread_mutex_unlock(mypthread_mutex_t *mutex) {
 	//Check if current thread is allowed to unlock this mutex
 	if (mutex->thread_who_locked != current_thread->thread_ID)
 		handle_error("Another thread who didn't lock the mutex tried to unlock it");
-	
+	*/
+	struct itimerval * saved_timer = NULL;
+	tcb * current_thread = NULL;
 
+	while (__atomic_test_and_set(&(mutex->inuse), 0) == 1){
+		if (saved_timer == NULL){
+			saved_timer = malloc(sizeof(struct itimerval));
+			timer->it_value.tv_sec = 0;
+			timer->it_value.tv_usec = 0;
+			if (setitimer(ITIMER_PROF,timer, saved_timer) == -1)
+				handle_error("Error setting timer");
+		} else {
+			timer->it_value.tv_sec = 0;
+			timer->it_value.tv_usec = 0;
+			if (setitimer(ITIMER_PROF, timer, NULL) == -1)
+				handle_error("Error setting timer");
+		}
+		//Schedule another thread to run
+		schedule();
+	}
 	//Change status to 0 (unlocked)
 	mutex->status = 0;
-	mutex->thread_who_locked = UINT_MAX;
+	//mutex->thread_who_locked = UINT_MAX;
 
 	//Put all threads blocked into ready state
 	int i;
@@ -466,12 +617,21 @@ int mypthread_mutex_unlock(mypthread_mutex_t *mutex) {
 	}
 	mutex->next_free_spot = 0;
 	
+	mutex->inuse = 0;
+
+	if (saved_timer != NULL){
+		saved_timer->it_interval.tv_sec = 0;
+		saved_timer->it_interval.tv_usec = 0;
+		if (setitimer(ITIMER_PROF, saved_timer, NULL) == -1)
+			handle_error("Error setting timer");
+	}
+	/*
 	//Restore timer and return
 	saved_timer.it_interval.tv_sec = 0;
 	saved_timer.it_interval.tv_usec = 0;
 	if (setitimer(ITIMER_PROF, &saved_timer, NULL) == -1)
 		handle_error("Error setting timer");
-	
+	*/
 	return 0;
 };
 
@@ -483,6 +643,7 @@ int mypthread_mutex_destroy(mypthread_mutex_t *mutex) {
 	free(mutex->thread_ID_list);
 	mutex->thread_ID_list = NULL;
 
+	//printf("Numbner of locks %u\n", number_of_locks);
 	return 0;
 };
 
@@ -501,11 +662,8 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
+	//printf("SCHEDULING\n");
 	
-	//STOP THE TIMER
-	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = 0;
-	setitimer(ITIMER_PROF, timer, NULL);
 
 	//Find current thread running and save context and change state to READY
 	tcb * current_thread = NULL;

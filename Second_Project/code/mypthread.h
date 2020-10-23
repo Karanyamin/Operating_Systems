@@ -34,7 +34,7 @@
 #define JUSTFINISHED 5
 
 
-#define TIMER 20000
+#define TIMER 10000
 
 typedef uint mypthread_t;
 
@@ -62,6 +62,7 @@ typedef struct threadControlBlock {
 typedef struct mypthread_mutex_t {
 	/* add something here */
 	volatile int status; //Intialized to 0 (unlocked)
+	volatile int inuse;
 	mypthread_t thread_who_locked; //Thread ID who locked the mutex
 	mypthread_t * thread_ID_list; //list of threads ID waiting for mutex to be unlocked
 	uint list_capacity;
