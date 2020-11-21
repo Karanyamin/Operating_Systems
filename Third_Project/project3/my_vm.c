@@ -1,5 +1,11 @@
 #include "my_vm.h"
 
+//Implicit Declarations
+bool enough_virtual_pages(int pages, int* start_index, int* end_index);
+
+#define handle_error(msg) \
+    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
 /*
 Function responsible for allocating and setting your physical memory
 */
@@ -11,6 +17,38 @@ void SetPhysicalMem() {
 
     //HINT: Also calculate the number of physical and virtual pages and allocate
     //virtual and physical bitmaps and initialize them
+
+    //Allocate and zero out Physical Memory
+    physical_memory = malloc(MEMSIZE);
+    if (physical_memory == NULL){
+        handle_error("Unable to allocate physical memory");
+    }
+    memset(physical_memory, 0, MEMSIZE);
+
+    //Calculate number of physical pages
+    physical_pages_num = MEMSIZE / PGSIZE;
+
+    //Calculate number of virtual pages
+    virtual_pages_num = MAX_MEMSIZE / PGSIZE;
+
+    //Initalize physical and virtual bitmaps
+    physical_bitmap = malloc(sizeof(int) * physical_pages_num);
+    virtual_bitmap = malloc(sizeof(int) * virtual_pages_num);
+    memset(physical_bitmap, 0, sizeof(int) * physical_pages_num);
+    memset(virtual_bitmap, 0, sizeof(int) * virtual_pages_num);
+
+    //Get number of bits for offset
+    offset_bits = (int)log2(PGSIZE);
+
+    //Get number of entries in Page Directory and Page Table
+    page_directory_numOfEntries = (int)log2(virtual_pages_num) / 2;
+    page_table_numOfEntries = 32 - offset_bits - page_directory_numOfEntries;
+
+    /*  Set up page directory where each element of this array is a reference
+        to the start of a page table. Zero out page directory
+    */
+    page_directory = malloc(sizeof(pde_t) * pow(2, page_directory_numOfEntries));
+    memset(page_directory, 0, sizeof(pde_t) * pow(2, page_directory_numOfEntries));
 
 }
 
@@ -95,9 +133,109 @@ PageMap(pde_t *pgdir, void *va, void *pa)
 
 /*Function that gets the next available page
 */
-void *get_next_avail(int num_pages) {
+void *get_next_avail_virtual(int num_pages) {
+    /*
+    //HACK virtual bitmap
+    virtual_bitmap = malloc(sizeof(int) * 10);
+    virtual_bitmap[0] = 0;
+    virtual_bitmap[1] = 1;
+    virtual_bitmap[2] = 0;
+    virtual_bitmap[3] = 1;
+    virtual_bitmap[4] = 0;
+    virtual_bitmap[5] = 0;
+    virtual_bitmap[6] = 1;
+    virtual_bitmap[7] = 0;
+    virtual_bitmap[8] = 0;
+    virtual_bitmap[9] = 0;
+    virtual_pages_num = 10;
+    printf("================Start=================\n");
+    int i;
+    for (int i = 0; i < virtual_pages_num; i++){
+        printf("%d ", virtual_bitmap[i]);
+    }
+    printf("\n================END=================\n");
+    */
+    printf("Total virtual pages is %d\n", virtual_pages_num);
+    //Use virtual address bitmap to find the next free page (Contiguous)
+    int start_index;
+    int end_index;
+    if (enough_virtual_pages(num_pages, &start_index, &end_index)){
+        printf("Start of block [%d], end of block [%d]\n", start_index, end_index);
+        return malloc(10);
+    } else {
+        return NULL;
+    }
+}
 
-    //Use virtual address bitmap to find the next free page
+//Checks if there is enough virtual pages to satisfy request
+bool enough_virtual_pages(int pages, int* start_index, int* end_index){
+    //Edge case
+    if (pages == 0) return true;
+
+    int temp = pages;
+
+    int i;
+    for (i = 0; i < virtual_pages_num; i++){
+        if (virtual_bitmap[i] == 0){
+            *start_index = i;
+            temp--;
+            i++;
+            //Check if there is a contiguous chunk of temp - 1 more pages ahead
+            while (i < virtual_pages_num && temp > 0 && virtual_bitmap[i] == 0){
+                temp--;
+                i++;
+            }
+            if (temp == 0){
+                //Enough virtual pages to satisfy request
+                *end_index = i-1; //Inclusive
+                return true;
+            } else if (i == virtual_pages_num){
+                //Reached end of virtual bitmap and there are still more virtual pages left to be allocated
+                return false;
+            } else {
+                //Theres a empty chunk but its not contiguous
+                temp = pages;
+            }
+        }
+    }
+    return false;
+}
+
+
+//Checks if there is enough physical pages to satisfy request
+bool enough_physical_pages(int pages){
+    /*
+    //Edge Case when pages == 0
+    if (pages == 0) return true;
+
+    char * memory = (char*)physical_memory; //Just so we can do pointer arthemetic
+
+    int i;
+    for (i = 0; i < MEMSIZE; i += PGSIZE){
+        if (memory[i] == 0) pages--;
+
+        if (pages == 0) return true; //All pages can be allocated
+    }
+
+    return false; //Not enough pages to satisfy request
+    */
+    if (pages == 0) return true;
+    int i;
+    for (i = 0; i < physical_pages_num; i++){
+        if (physical_bitmap[i] == 0) pages--;
+
+        if (pages == 0) return true;
+    }
+    return false;
+}
+
+
+//Get the address of the next avaiable physical page that is free
+void *get_next_avail_physical() {
+
+    //Use physical address bitmap to find the next free page
+
+
 }
 
 
@@ -112,6 +250,32 @@ void *myalloc(unsigned int num_bytes) {
    page directory. Next, using get_next_avail(), check if there are free pages. If
    free pages are available, set the bitmaps and map a new page. Note, you will
    have to mark which physical pages are used. */
+
+    //Check if physical memory has been intialized
+    if (physical_memory == NULL){
+        SetPhysicalMem();
+    }
+
+    //Get number of pages that need to be allocated
+    unsigned int unallocated_pages = (num_bytes / PGSIZE);
+    if ((num_bytes % PGSIZE) != 0){
+        //Theres some leftover bytes
+        unallocated_pages++;
+    }
+
+    if (enough_physical_pages(unallocated_pages)){
+        //Theres enough pages in physical memory to accomodate this request
+        printf("ENough pages!\n");
+        if (get_next_avail_virtual(unallocated_pages) != NULL){
+            printf("There's enough continguous Virtual pages\n");
+        } else {
+            printf("Not enough contiguous virtual pages\n");
+            return NULL;
+        }
+    } else {
+        printf("Not enough pages :(\n");
+        return NULL;
+    }
 
     return NULL;
 }
