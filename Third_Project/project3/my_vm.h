@@ -45,8 +45,12 @@ pde_t * page_directory;
 
 //Bits for PG, PT, offset
 int offset_bits;
-int page_directory_numOfEntries;
-int page_table_numOfEntries;
+int page_directory_bits;
+int page_table_bits;
+
+//Data for hits and misses
+unsigned long long hits;
+unsigned long long misses;
 
 #define TLB_SIZE 120
 
@@ -56,8 +60,11 @@ struct tlb {
     //Assume your TLB is a direct mapped TLB of TBL_SIZE (entries)
     // You must also define wth TBL_SIZE in this file.
     //Assume each bucket to be 4 bytes
+    void * virtual_address;
+    void * physical_address;
+    struct tlb * next;
 };
-struct tlb tlb_store;
+struct tlb * tlb_store;
 
 
 void SetPhysicalMem();
