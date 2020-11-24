@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB
@@ -51,6 +52,9 @@ int page_table_bits;
 //Data for hits and misses
 unsigned long long hits;
 unsigned long long misses;
+
+//Mutexes for the library
+pthread_mutex_t main_mutex;
 
 #define TLB_SIZE 120
 

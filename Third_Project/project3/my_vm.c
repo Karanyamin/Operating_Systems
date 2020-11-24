@@ -82,6 +82,10 @@ void SetPhysicalMem() {
     hits = 0;
     misses = 0;
 
+    //Intialize all the mutexes
+    if (pthread_mutex_init(&main_mutex, NULL) != 0)
+        handle_error("Couldn't intialize mutex");
+
 
 }
 
@@ -115,10 +119,12 @@ add_TLB(void *va, void *pa)
     ptr->virtual_address = (void *)virtual_address;
     ptr->physical_address = pa;
 
-    //Move node to front
-    prev->next = NULL;
-    ptr->next = tlb_store;
-    tlb_store = ptr;
+    //Move node to front if ptr isn't already there
+    if (ptr != tlb_store){
+        prev->next = NULL;
+        ptr->next = tlb_store;
+        tlb_store = ptr;
+    }
 
 }
 
@@ -145,9 +151,13 @@ check_TLB(void *va) {
     struct tlb * prev = NULL;
     while (ptr != NULL){
         u_int32_t TLB_virtual_address = (u_int32_t)(ptr->virtual_address);
-        if (TLB_virtual_address == virtual_address){
+        if (TLB_virtual_address == virtual_address && ptr->physical_address != NULL){
             //A HIT! Move this node to the begining of list
             hits++;
+            if (ptr == tlb_store){
+                //First node in TLB was a hit, no need to move to front of list
+                return ptr->physical_address;
+            }
             prev->next = ptr->next;
             ptr->next = tlb_store;
             tlb_store = ptr;
@@ -176,7 +186,7 @@ print_TLB_missrate()
     /*Part 2 Code here to calculate and print the TLB miss rate*/
     
     //We already have the total number of hits and misses, calculate rate
-    miss_rate = (misses) / (misses + hits); 
+    miss_rate = (double)(misses) / (misses + hits); 
 
 
 
@@ -192,7 +202,7 @@ pte_t * Translate(pde_t *pgdir, void *va) {
     //HINT: Get the Page directory index (1st level) Then get the
     //2nd-level-page table index using the virtual address.  Using the page
     //directory index and page table index get the physical address
-
+    
     //First check if there's a translation in TLB
     void * TLB_physical_address = check_TLB(va);
     if (TLB_physical_address != NULL){
@@ -203,9 +213,9 @@ pte_t * Translate(pde_t *pgdir, void *va) {
         return (pte_t *)adjusted_physical_addressTLB;
     }
     //No translation in TLB, proceed to find one through page directory
-
+    
     //Find index of page directory and table and get physical address
-    u_int32_t virtual_address = (u_int32_t)va;
+    u_int32_t virtual_address = (u_int32_t)va - PGSIZE;
     unsigned int page_directory_index = (virtual_address >> offset_bits) >> page_table_bits;
     unsigned int page_table_index = (virtual_address >> offset_bits) & createMask(0, page_table_bits - 1);
     u_int32_t physical_address = (u_int32_t)page_directory[page_directory_index][page_table_index];
@@ -325,7 +335,7 @@ void *get_next_avail_virtual(int num_pages) {
     }
     printf("\n================END=================\n");
     */
-    printf("Total virtual pages is %d\n", virtual_pages_num);
+    //printf("Total virtual pages is %d\n", virtual_pages_num);
     //Use virtual address bitmap to find the next free page (Contiguous)
     int start_index;
     int end_index;
@@ -340,13 +350,14 @@ void *get_next_avail_virtual(int num_pages) {
     for (i = start_index; i <= end_index; i++){
         //Each i is a virtual page we need to find a physical page to map to
         //Turn i into a virtual address
+        
         u_int32_t virtual_address = i * pow(2, 12);
         u_int32_t physical_address = (u_int32_t)get_next_avail_physical();
 
         //We can set this page table entry to the corresponding values
         PageMap( page_directory, (void*)virtual_address, (void*)physical_address);
     }
-
+    
     //Update virtual bitmap
     for (i = start_index; i <= end_index; i++){
         virtual_bitmap[i] = 1;
@@ -354,7 +365,7 @@ void *get_next_avail_virtual(int num_pages) {
     //print_page_directories();
 
     //We need to return the starting virtual address
-    u_int32_t virtual_address_start = start_index * pow(2, 12);
+    u_int32_t virtual_address_start = start_index * pow(2, 12) + PGSIZE;
     return (void*)virtual_address_start;
 }
 
@@ -424,6 +435,18 @@ void *get_next_avail_physical() {
     return NULL;
 }
 
+void printTLB(){
+    struct tlb * ptr = tlb_store;
+    printf("========START======\n");
+    while (ptr != NULL){
+        u_int32_t va = (u_int32_t)(ptr->virtual_address);
+        u_int32_t pa = (u_int32_t)(ptr->physical_address);
+        printf("Virtual page [%08x], Physical Page [%08x]\n", (unsigned int)va, (unsigned int)pa);
+        ptr = ptr->next;
+    }
+    printf("=======END=======\n");
+}
+
 
 /* Function responsible for allocating pages
 and used by the benchmark
@@ -442,6 +465,9 @@ void *myalloc(unsigned int num_bytes) {
         SetPhysicalMem();
     }
 
+    //Lock the library
+    pthread_mutex_lock(&main_mutex);
+
     //Get number of pages that need to be allocated
     unsigned int unallocated_pages = (num_bytes / PGSIZE);
     if ((num_bytes % PGSIZE) != 0){
@@ -451,22 +477,26 @@ void *myalloc(unsigned int num_bytes) {
 
     if (enough_physical_pages(unallocated_pages)){
         //Theres enough pages in physical memory to accomodate this request
-        printf("Enough physical pages!\n");
+        //printf("Enough physical pages!\n");
         //Allocate physical memory and map to virtual memory in directory
         void * allocated_pages = get_next_avail_virtual(unallocated_pages);
 
         if (allocated_pages != NULL){
-            printf("There's enough continguous Virtual pages\n");
+            //printf("There's enough continguous Virtual pages\n");
+            pthread_mutex_unlock(&main_mutex);
             return allocated_pages;
         } else {
-            printf("Not enough contiguous virtual pages\n");
+            //printf("Not enough contiguous virtual pages\n");
+            pthread_mutex_unlock(&main_mutex);
             return NULL;
         }
     } else {
-        printf("Not enough physical pages :(\n");
+        //printf("Not enough physical pages :(\n");
+        pthread_mutex_unlock(&main_mutex);
         return NULL;
     }
 
+    pthread_mutex_unlock(&main_mutex); //The code will never reach this point, but I'm unlocking just in case
     return NULL;
 }
 
@@ -481,11 +511,14 @@ void myfree(void *va, int size) {
     //Quick error check
     if (size < 0) return;
 
+    //Lock the library
+    pthread_mutex_lock(&main_mutex);
+
     //Find out how many virtual pages is this freeing 
     unsigned int pages = (unsigned int)ceil((double)size / PGSIZE);
     
     //Find starting and ending virtual page index
-    u_int32_t virtual_address = (u_int32_t)va;
+    u_int32_t virtual_address = (u_int32_t)va - PGSIZE;
     unsigned int start_index = virtual_address >> offset_bits;
     unsigned int end_index = start_index + pages;
 
@@ -513,6 +546,8 @@ void myfree(void *va, int size) {
         physical_bitmap[physical_page_number] = 0;
     }
 
+    //Unlock the mutex
+    pthread_mutex_unlock(&main_mutex);
 
 }
 
@@ -527,6 +562,9 @@ void PutVal(void *va, void *val, int size) {
        than one page. Therefore, you may have to find multiple pages using Translate()
        function.*/
 
+    //Lock the library
+    pthread_mutex_lock(&main_mutex);
+    
     //Determine how many bytes we have already copied from val
     unsigned int bytes_copied = 0;
 
@@ -586,6 +624,9 @@ void PutVal(void *va, void *val, int size) {
         memcpy(pa, val + bytes_copied, leftover);
     }
 
+    //Unlock the library
+    pthread_mutex_unlock(&main_mutex);
+
 }
 
 
@@ -596,6 +637,9 @@ void GetVal(void *va, void *val, int size) {
     "val" address. Assume you can access "val" directly by derefencing them.
     If you are implementing TLB,  always check first the presence of translation
     in TLB before proceeding forward */
+
+    //Lock the library
+    pthread_mutex_lock(&main_mutex);
 
     //Implementation should be very similar to PutVal, except switch source and dest in memcpy
     unsigned int bytes_copied = 0;
@@ -654,6 +698,9 @@ void GetVal(void *va, void *val, int size) {
         memcpy(val + bytes_copied, pa, leftover);
     }
 
+    //Unlock library
+    pthread_mutex_unlock(&main_mutex);
+
 }
 
 
@@ -671,5 +718,31 @@ void MatMult(void *mat1, void *mat2, int size, void *answer) {
     getting the values from two matrices, you will perform multiplication and
     store the result to the "answer array"*/
 
+    //Cast the matrix to int arrays
+    int* matrix1 = (int*)mat1;
+    int* matrix2 = (int*)mat2;
+    int* result = (int*)answer;
+
+    //Perform multiplication
+    int i,j,k;
+    for (i = 0; i < size; i++){
+        for (j = 0; j < size; j++){
+            int sum = 0;
+            for (k = 0; k < size; k++){
+                /*  Usually we would do 
+                    sum += mat1[i][k] * mat2[k][j]; but since it's 1-D we have 
+                    to change it sum += mat1[i * size + k] * mat2[k * size + j]
+                    but since its va we use getval and putval
+                */
+                int first;
+                int second;
+                GetVal(matrix1 + (i * size + k), &first, sizeof(int));
+                GetVal(matrix2 + (k * size + j), &second, sizeof(int));
+                sum += first * second;
+            }
+            //Usually we could do result[i * size + j] = sum;
+            PutVal(result + (i * size + j), &sum, sizeof(int));
+        }
+    }
 
 }
