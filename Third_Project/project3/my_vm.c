@@ -23,7 +23,6 @@ void SetPhysicalMem() {
     //HINT: Also calculate the number of physical and virtual pages and allocate
     //virtual and physical bitmaps and initialize them
 
-    printf("ABout to allocate twice\n");
 
     //Allocate and zero out Physical Memory
     physical_memory = malloc(MEMSIZE);
@@ -187,7 +186,7 @@ print_TLB_missrate()
     
     //We already have the total number of hits and misses, calculate rate
     miss_rate = (double)(misses) / (misses + hits); 
-
+    miss_rate *= 100; //Turn into percentage
 
 
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
@@ -339,9 +338,7 @@ void *get_next_avail_virtual(int num_pages) {
     //Use virtual address bitmap to find the next free page (Contiguous)
     int start_index;
     int end_index;
-    if (enough_virtual_pages(num_pages, &start_index, &end_index)){
-        printf("Start of block [%d], end of block [%d]\n", start_index, end_index);
-    } else {
+    if (!enough_virtual_pages(num_pages, &start_index, &end_index)){
         return NULL;
     }
 
@@ -678,7 +675,7 @@ void GetVal(void *va, void *val, int size) {
 
         bytes_copied += PGSIZE;
         size -= PGSIZE;
-
+ 
         //Change va to next page
         u_int32_t virtual_address = (u_int32_t)va;
         virtual_address += PGSIZE;
