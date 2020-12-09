@@ -5,6 +5,9 @@ bool enough_virtual_pages(int pages, int* start_index, int* end_index);
 void *get_next_avail_physical();
 unsigned createMask(unsigned a, unsigned b);
 
+//Mutexes for the library
+pthread_mutex_t main_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
@@ -19,6 +22,7 @@ void SetPhysicalMem() {
 
     //HINT: Also calculate the number of physical and virtual pages and allocate
     //virtual and physical bitmaps and initialize them
+
 
     //Allocate and zero out Physical Memory
     physical_memory = malloc(MEMSIZE);
@@ -81,11 +85,6 @@ void SetPhysicalMem() {
     //Initalize hit and miss to 0
     hits = 0;
     misses = 0;
-
-    //Intialize all the mutexes
-    if (pthread_mutex_init(&main_mutex, NULL) != 0)
-        handle_error("Couldn't intialize mutex");
-
 
 }
 
@@ -187,7 +186,7 @@ print_TLB_missrate()
     
     //We already have the total number of hits and misses, calculate rate
     miss_rate = (double)(misses) / (misses + hits); 
-
+    miss_rate *= 100; //Turn into percentage
 
 
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
@@ -339,9 +338,7 @@ void *get_next_avail_virtual(int num_pages) {
     //Use virtual address bitmap to find the next free page (Contiguous)
     int start_index;
     int end_index;
-    if (enough_virtual_pages(num_pages, &start_index, &end_index)){
-        printf("Start of block [%d], end of block [%d]\n", start_index, end_index);
-    } else {
+    if (!enough_virtual_pages(num_pages, &start_index, &end_index)){
         return NULL;
     }
 
@@ -356,13 +353,11 @@ void *get_next_avail_virtual(int num_pages) {
 
         //We can set this page table entry to the corresponding values
         PageMap( page_directory, (void*)virtual_address, (void*)physical_address);
-    }
-    
-    //Update virtual bitmap
-    for (i = start_index; i <= end_index; i++){
+
+        //Update Virtual bitmap
         virtual_bitmap[i] = 1;
     }
-    //print_page_directories();
+    
 
     //We need to return the starting virtual address
     u_int32_t virtual_address_start = start_index * pow(2, 12) + PGSIZE;
@@ -460,13 +455,14 @@ void *myalloc(unsigned int num_bytes) {
    free pages are available, set the bitmaps and map a new page. Note, you will
    have to mark which physical pages are used. */
 
+    //Lock the library
+    pthread_mutex_lock(&main_mutex);
+
     //Check if physical memory has been intialized
     if (physical_memory == NULL){
         SetPhysicalMem();
     }
 
-    //Lock the library
-    pthread_mutex_lock(&main_mutex);
 
     //Get number of pages that need to be allocated
     unsigned int unallocated_pages = (num_bytes / PGSIZE);
@@ -679,7 +675,7 @@ void GetVal(void *va, void *val, int size) {
 
         bytes_copied += PGSIZE;
         size -= PGSIZE;
-
+ 
         //Change va to next page
         u_int32_t virtual_address = (u_int32_t)va;
         virtual_address += PGSIZE;

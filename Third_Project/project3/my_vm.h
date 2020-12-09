@@ -53,8 +53,6 @@ int page_table_bits;
 unsigned long long hits;
 unsigned long long misses;
 
-//Mutexes for the library
-pthread_mutex_t main_mutex;
 
 #define TLB_SIZE 120
 
