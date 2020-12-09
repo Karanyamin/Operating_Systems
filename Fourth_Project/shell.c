@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -17,12 +18,29 @@
 #define sizeOfEachCommand 1000
 
 //All implicit declarations
-void execute_command(char * command);
+int execute_command(char * command);
+void signal_handler();
 
 char current_directory[4096]; //Should be called cwd but too
 char previous_directory[4096];
 
+pid_t children[sizeOfEachCommand];
+int number_of_children;
+
+bool stop_making_children = false;
+
 int main(int argc, char** argv){
+
+    //Use sigaction to register handler
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = &signal_handler;
+    sa.sa_flags = SA_RESTART;
+	sigaction(SIGINT, &sa, NULL);
+
+    //Initialize children array
+    memset(children, 0, sizeof(children));
+    number_of_children = 0;
 
     getcwd(current_directory, sizeof(current_directory));
 
@@ -70,7 +88,9 @@ int main(int argc, char** argv){
 
             //Execute all the commands
             for (i = 0; i < counter; i++){
-                execute_command(all_commands[i]);
+                if (execute_command(all_commands[i]) == -1){
+                    break;
+                }
             }
             
             //Free all malloced memory
@@ -220,19 +240,73 @@ pid_t create_process(int inFromLast, int outToNext, char* command){
 
         //Execute process
         execvp(file, argv);
+        printf("%s command not found\n", file);
+        exit(1);
     }
     return child;
 }
 
-void execute_pipe_array(char** pipeArray, int numPipes, char** redirectArray){
+void wait_for_children(){
+    pid_t temp;
+    int i;
+    while ((temp = wait(NULL)) != -1){
+        for (i = 0; i < number_of_children; i++ ){
+            if (children[i] == temp){
+                children[i] = 0; //Child terminated
+            }
+        }
+    }
+
+    if (errno != ECHILD){
+        printf("Something weird happened\n");
+    }
+
+}
+
+void signal_handler(){
+    //Terminate all child processes if pid_t children is not NULL
+    if (number_of_children != 0){
+        int i;
+
+        for (i = 0; i < number_of_children; i++){
+            if (children[i] != 0){
+                printf("Sendinf it twice\n");
+                //kill(children[i], SIGINT);
+            }
+        }
+        
+        //Communiate to stop making more child processes
+        stop_making_children = true;
+    }
+
+}
+
+int execute_pipe_array(char** pipeArray, int numPipes, char** redirectArray){
     int i;
     int inFromLast = STDIN_FILENO;
     int fd[2];
+    //pid_t lastChild;
 
     for (i = 0; i < numPipes - 1; i++){
         pipe(fd);
 
-        create_process(inFromLast, fd[1], pipeArray[i]);
+        //lastChild = create_process(inFromLast, fd[1], pipeArray[i]);
+
+        //Check if we should make new children
+        if (stop_making_children){
+            //A signal has been sent to all children to terminate. Wait on the children and return
+            wait_for_children();
+            close(fd[0]);
+            close(fd[1]);
+
+            //Allow future commands to make processes
+            stop_making_children = false;
+
+            return -1;
+        }
+
+        //Add child to global children array to be used by signal handler
+        children[number_of_children++] = create_process(inFromLast, fd[1], pipeArray[i]);
 
         close(fd[1]);
 
@@ -240,9 +314,19 @@ void execute_pipe_array(char** pipeArray, int numPipes, char** redirectArray){
     }
 
     //Last process, if there's a redirect to a file do so, if not direct output of last process to STDOUT
-    pid_t lastChild;
     if (strcmp(redirectArray[2], "none") == 0){
-        lastChild = create_process(inFromLast, STDOUT_FILENO, pipeArray[i]);
+        //lastChild = create_process(inFromLast, STDOUT_FILENO, pipeArray[i]);
+        if (stop_making_children){
+            //A signal has been sent to all children to terminate. Wait on the children and return
+            wait_for_children();
+            close(fd[0]);
+
+            //Allow future commands to make processes
+            stop_making_children = false;
+
+            return -1;
+        }
+        children[number_of_children++] = create_process(inFromLast, STDOUT_FILENO, pipeArray[i]);
     } else if (strcmp(redirectArray[2], "single") == 0){
         //Extract redirect file name by tokenizing it, first make a copy
         char * redirect_file_copy = malloc(sizeof(char) * (strlen(redirectArray[1]) + 1));
@@ -252,7 +336,18 @@ void execute_pipe_array(char** pipeArray, int numPipes, char** redirectArray){
         char * file = strtok(redirect_file_copy, " ");
     
         int redirectfd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        lastChild = create_process(inFromLast, redirectfd, pipeArray[i]);
+        //lastChild = create_process(inFromLast, redirectfd, pipeArray[i]);
+        if (stop_making_children){
+            //A signal has been sent to all children to terminate. Wait on the children and return
+            wait_for_children();
+            close(fd[0]);
+
+            //Allow future commands to make processes
+            stop_making_children = false;
+
+            return -1;
+        }
+        children[number_of_children++] = create_process(inFromLast, redirectfd, pipeArray[i]);
 
         //Close and free any memory
         close(redirectfd);
@@ -266,20 +361,44 @@ void execute_pipe_array(char** pipeArray, int numPipes, char** redirectArray){
         char * file = strtok(redirect_file_copy, " ");
 
         int redirectfd = open(file, O_WRONLY | O_CREAT | O_APPEND, 0666);
-        lastChild = create_process(inFromLast, redirectfd, pipeArray[i]);
+        //lastChild = create_process(inFromLast, redirectfd, pipeArray[i]);
+        if (stop_making_children){
+            //A signal has been sent to all children to terminate. Wait on the children and return
+            wait_for_children();
+            close(fd[0]);
+
+            //Allow future commands to make processes
+            stop_making_children = false;
+
+            return -1;
+        }
+        children[number_of_children++] = create_process(inFromLast, redirectfd, pipeArray[i]);
 
         //Close and free any memory
         close(redirectfd);
         free(redirect_file_copy);
+    } else {
+        printf("Error in piping to redirect in execute_pipe_array\n");
     }
     
     close(fd[0]);
 
-    //Wait for the last child process
-    waitpid(lastChild, 0, 0);
+    //Wait for all the children to finish
+    wait_for_children();
+    //waitpid(lastChild, 0, 0);
+
+    //clear children array
+    memset(children, 0, sizeof(children));
+    number_of_children = 0;
+    
+    //Allow next process to create children Return success
+    stop_making_children = false;
+    return 0;
 }
 
-void execute_command(char * command){
+int execute_command(char * command){
+
+    int returnCode;
     
     //Copy command
     char * command_copy = malloc(sizeof(char) * (strlen(command) + 1));
@@ -311,7 +430,7 @@ void execute_command(char * command){
         if (arguments != NULL){
             //Too many argurments
             printf("shell: cd: too many arguments\n");
-            return;
+            return 0;
         }
 
         //Save current Directory in buffer
@@ -322,7 +441,7 @@ void execute_command(char * command){
         //Change the current working directory and return
         if (chdir(new_path) == -1){
             printf("shell: cd: %s: No such file or directory\n", new_path);
-            return;
+            return 0;
         }
 
         //Copy old directory into previous_directory
@@ -339,12 +458,15 @@ void execute_command(char * command){
             free(new_path);
         }
         
+        returnCode = 0;
 
     } else if (strcmp(token, "pwd") == 0){
         char directory[4096];
         memset(directory, '\0', sizeof(directory));
         getcwd(directory, sizeof(directory));
         printf("%s\n", directory);
+
+        returnCode = 0;
 
     } else {
         //Call splitRedirect to split the command by > or >> if it needs to
@@ -354,7 +476,7 @@ void execute_command(char * command){
         int numberOfPipes;
         char ** pipeArray = splitPipes(redirectArray[0], &numberOfPipes);
 
-        execute_pipe_array(pipeArray, numberOfPipes, redirectArray);
+        returnCode = execute_pipe_array(pipeArray, numberOfPipes, redirectArray);
 
 
         /*
@@ -420,5 +542,7 @@ void execute_command(char * command){
         free(pipeArray);
     }
     free(command_copy);
+
+    return returnCode;
 
 }
